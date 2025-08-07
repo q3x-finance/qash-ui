@@ -87,6 +87,45 @@ export async function createP2IDENote(
   }
 }
 
+export async function createSchedulePaymentNote(
+  sender: string,
+  receiver: string,
+  faucet: string,
+  amount: number,
+  noteType: WrappedNoteType,
+  recallHeight: number,
+  timelockHeight: number,
+) {
+  try {
+    const { OutputNote, WebClient } = await import("@demox-labs/miden-sdk");
+
+    const client = await WebClient.createClient(NODE_ENDPOINT);
+    const serialNumbers = await randomSerialNumbers();
+    const serialNumbersCopy = serialNumbers.map(felt => felt.toString());
+
+    // get current height
+    const currentHeight = await client.getSyncHeight();
+    recallHeight = currentHeight + recallHeight;
+
+    const note = await customCreateP2IDENote(
+      sender,
+      receiver,
+      amount,
+      faucet,
+      recallHeight,
+      timelockHeight,
+      noteType,
+      0,
+      serialNumbers,
+    );
+
+    return [OutputNote.full(note), serialNumbersCopy, recallHeight];
+  } catch (error) {
+    throw new Error("Failed to create P2IDENote");
+    console.log(error);
+  }
+}
+
 export async function consumeAllUnauthenticatedNotes(
   account: string,
   notes: {
