@@ -1,9 +1,9 @@
 "use client";
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { AmountInput } from "./AmountInput";
 import { TransactionOptions } from "./TransactionOptions";
 import { useModal } from "@/contexts/ModalManagerProvider";
-import { MODAL_IDS, SendModalProps } from "@/types/modal";
+import { MODAL_IDS } from "@/types/modal";
 import { SelectTokenInput } from "../Common/SelectTokenInput";
 import { ActionButton } from "../Common/ActionButton";
 import { useForm } from "react-hook-form";
@@ -12,7 +12,6 @@ import { createP2IDENote } from "@/services/utils/miden/note";
 import { useWalletConnect } from "@/hooks/web3/useWalletConnect";
 import { useAccountContext } from "@/contexts/AccountProvider";
 import { getDefaultSelectedToken } from "@/services/utils/tokenSelection";
-import { useEffect } from "react";
 import { AssetWithMetadata } from "@/types/faucet";
 import {
   QASH_TOKEN_ADDRESS,
@@ -30,19 +29,105 @@ import { CustomNoteType, WrappedNoteType } from "@/types/note";
 import { useBatchTransactions } from "@/services/store/batchTransactions";
 import { formatUnits } from "viem";
 import { useRecallableNotes } from "@/hooks/server/useRecallableNotes";
-import { useAcceptRequest } from "@/services/api/request-payment";
+import { useAddMemberToQuickShare, useGetPaymentByLink } from "@/services/api/group-payment";
+
+/**
+ * 
+ * 
+ * 
+ * {
+    "id": 1,
+    "createdAt": "2025-08-06T16:25:59.614Z",
+    "updatedAt": "2025-08-06T16:25:59.614Z",
+    "ownerAddress": "mtst1qqx8hfth5f9axyznr2g8df248gs2m96a",
+    "tokens": [
+        {
+            "amount": "0",
+            "faucetId": "mtst1qpuzxzy5au9n2gq5vhsvyyl9jsaq5a7w",
+            "metadata": {
+                "symbol": "QASH",
+                "decimals": 8,
+                "maxSupply": 1000000000000000000
+            }
+        }
+    ],
+    "amount": "1",
+    "perMember": "0.200000",
+    "linkCode": "TzTtrm8Pn8sYPbCt",
+    "status": "pending",
+    "group": {
+        "id": 2,
+        "createdAt": "2025-08-06T15:22:41.390Z",
+        "updatedAt": "2025-08-06T15:22:41.390Z",
+        "name": "Quick Share",
+        "ownerAddress": "mtst1qqx8hfth5f9axyznr2g8df248gs2m96a",
+        "members": [
+            "-",
+            "-",
+            "-",
+            "-",
+            "-"
+        ]
+    },
+    "memberStatuses": [
+        {
+            "id": 1,
+            "createdAt": "2025-08-06T16:25:59.621Z",
+            "updatedAt": "2025-08-06T16:25:59.621Z",
+            "memberAddress": "-",
+            "status": "pending",
+            "paidAt": null
+        },
+        {
+            "id": 2,
+            "createdAt": "2025-08-06T16:25:59.621Z",
+            "updatedAt": "2025-08-06T16:25:59.621Z",
+            "memberAddress": "-",
+            "status": "pending",
+            "paidAt": null
+        },
+        {
+            "id": 3,
+            "createdAt": "2025-08-06T16:25:59.621Z",
+            "updatedAt": "2025-08-06T16:25:59.621Z",
+            "memberAddress": "-",
+            "status": "pending",
+            "paidAt": null
+        },
+        {
+            "id": 4,
+            "createdAt": "2025-08-06T16:25:59.621Z",
+            "updatedAt": "2025-08-06T16:25:59.621Z",
+            "memberAddress": "-",
+            "status": "pending",
+            "paidAt": null
+        },
+        {
+            "id": 5,
+            "createdAt": "2025-08-06T16:25:59.621Z",
+            "updatedAt": "2025-08-06T16:25:59.621Z",
+            "memberAddress": "-",
+            "status": "pending",
+            "paidAt": null
+        }
+    ],
+    "totalMembers": 5,
+    "paidMembers": 0
+}
+ * 
+ */
 
 export enum AmountInputTab {
   SEND = "send",
   STREAM = "stream",
 }
 
-interface SendTransactionFormProps {
+interface QuickSendFormProps {
   activeTab?: AmountInputTab;
   onTabChange?: (tab: AmountInputTab) => void;
 }
 
-interface SendTransactionFormValues {
+interface QuickSendFormValues {
   amount: number;
   recipientAddress: string;
   recallableTime: number;
@@ -50,34 +135,20 @@ interface SendTransactionFormValues {
   message?: string;
 }
 
-export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalProps> = ({
-  activeTab,
-  onTabChange,
-  onClose,
-  ...props
-}) => {
+export const QuickSendForm: React.FC<QuickSendFormProps> = ({ activeTab = AmountInputTab.SEND, onTabChange }) => {
   // **************** Custom Hooks *******************
   const searchParams = useSearchParams();
-  const { openModal, isModalOpen } = useModal();
+  const { openModal } = useModal();
   const { isConnected } = useWalletConnect();
   const { assets, accountId: walletAddress, forceFetch: forceRefetchAssets } = useAccountContext();
   const { mutateAsync: sendSingleTransaction } = useSendSingleTransaction();
-  const { addTransaction, getBatchTransactions, removeTransaction } = useBatchTransactions(state => state);
+  const { addTransaction } = useBatchTransactions(state => state);
   const { forceFetch: forceRefetchRecallablePayment } = useRecallableNotes();
-  const { mutateAsync: acceptRequest } = useAcceptRequest();
+  const { mutateAsync: addMemberToQuickShare } = useAddMemberToQuickShare();
 
-  // Check if component is being used as a modal
-  const isSendModalOpen = isModalOpen(MODAL_IDS.SEND);
-
-  // Get initial data based on usage mode
-  // If modal: use props data, else: use URL search params
-  const recipientParam = isSendModalOpen ? props.recipient || "" : searchParams?.get("recipient") || "";
-  const recipientNameParam = isSendModalOpen ? props.recipientName || "" : searchParams?.get("name") || ""; // Modal doesn't have name param
-  const tokenAddressParam = isSendModalOpen ? props.tokenAddress || "" : searchParams?.get("tokenAddress") || "";
-  const amountParam = isSendModalOpen ? props.amount || "" : searchParams?.get("amount") || "";
-  const messageParam = isSendModalOpen ? props.message || "" : searchParams?.get("message") || "";
-  const isGroupPaymentParam = isSendModalOpen ? props.isGroupPayment : false;
-  const isRequestPaymentParam = isSendModalOpen ? props.isRequestPayment : false;
+  // Get quick share code from URL params
+  const quickShareCodeParam = searchParams?.get("quickShareCode") || "";
+  const { data: paymentByLink } = useGetPaymentByLink(quickShareCodeParam);
 
   // **************** Form Hooks *******************
   const {
@@ -88,13 +159,13 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
     getValues,
     watch,
     reset,
-  } = useForm<SendTransactionFormValues>({
+  } = useForm<QuickSendFormValues>({
     defaultValues: {
-      amount: amountParam ? parseFloat(amountParam) : undefined,
-      recipientAddress: recipientParam,
+      amount: undefined,
+      recipientAddress: "",
       recallableTime: 1 * 60 * 60, // 1 hour in seconds
       isPrivateTransaction: false,
-      message: messageParam || "",
+      message: "",
     },
   });
 
@@ -110,7 +181,7 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
   });
   const [selectedTokenAddress, setSelectedTokenAddress] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const [recipientName, setRecipientName] = useState(recipientNameParam);
+  const [recipientName, setRecipientName] = useState("");
   const [isSubmittingAsBatch, setIsSubmittingAsBatch] = useState(false);
 
   // Debounced address validation
@@ -139,17 +210,34 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
     setSelectedTokenAddress(defaultToken.faucetId);
   }, [assets]);
 
-  // Handle URL parameters for payment requests
+  // Handle payment link data
   useEffect(() => {
-    if (tokenAddressParam && assets.length > 0) {
-      // Find the token by address
-      const token = assets.find(asset => asset.faucetId === tokenAddressParam);
-      if (token) {
-        setSelectedToken(token);
-        setSelectedTokenAddress(token.faucetId);
+    if (paymentByLink && assets.length > 0) {
+      // Set amount to perMember amount
+      if (paymentByLink.perMember) {
+        setValue("amount", paymentByLink.perMember);
       }
+
+      // Set recipient to owner address
+      if (paymentByLink.group?.ownerAddress) {
+        setValue("recipientAddress", paymentByLink.group.ownerAddress);
+        setRecipientName(paymentByLink.group?.name || "Group Payment");
+      }
+
+      // Set token from the first token in the tokens array
+      if (paymentByLink.tokens && paymentByLink.tokens.length > 0) {
+        const paymentToken = paymentByLink.tokens[0];
+        const token = assets.find(asset => asset.faucetId === paymentToken.faucetId);
+        if (token) {
+          setSelectedToken(token);
+          setSelectedTokenAddress(token.faucetId);
+        }
+      }
+
+      // Set message for group payment
+      setValue("message", `Payment for ${paymentByLink.group?.name || "Group Payment"}`);
     }
-  }, [tokenAddressParam, assets]);
+  }, [paymentByLink, assets, setValue]);
 
   // ********************************************
   // **************** Handlers ******************
@@ -158,8 +246,10 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
   const handleTokenSelect = (token: AssetWithMetadata) => {
     setSelectedToken(token);
 
-    // Reset amount when switching tokens
-    setValue("amount", 0);
+    // Reset amount when switching tokens (unless it's from payment link)
+    if (!paymentByLink?.perMember) {
+      setValue("amount", 0);
+    }
 
     // Find the selected token in assets to get its address
     if (token.metadata.symbol === "QASH") {
@@ -173,16 +263,7 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
     }
   };
 
-  const handleChooseRecipient = () => {
-    openModal(MODAL_IDS.SELECT_RECIPIENT, {
-      onSave: (address: string, name: string) => {
-        setValue("recipientAddress", address, { shouldValidate: true });
-        setRecipientName(name);
-      },
-    });
-  };
-
-  const handleSendTransaction = async (data: SendTransactionFormValues) => {
+  const handleSendTransaction = async (data: QuickSendFormValues) => {
     const { amount, recipientAddress, recallableTime, isPrivateTransaction } = data;
 
     if (!isConnected || !walletAddress) {
@@ -190,6 +271,19 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
     }
 
     try {
+      // Check if payment is already complete (for quick share payments)
+      if (paymentByLink?.memberStatuses) {
+        const allMembersPaid = paymentByLink.memberStatuses.every(
+          memberStatus => memberStatus.status === "paid" || memberStatus.paidAt !== null,
+        );
+
+        if (allMembersPaid) {
+          toast.dismiss();
+          toast.error("This group payment is already complete. All members have paid.");
+          return;
+        }
+      }
+
       // check if amount > balance
       if (amount > parseFloat(selectedToken.amount)) {
         toast.dismiss();
@@ -217,15 +311,10 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
         return;
       }
 
-      if (recallableTime <= 0) {
-        toast.error("Recallable time must be greater than 0");
-        return;
-      }
-
       // Show transaction overview modal first
       openModal(MODAL_IDS.TRANSACTION_OVERVIEW, {
         amount: `${amount}`,
-        accountName: "My Account", // You can get this from account context if available
+        accountName: "My Account",
         accountAddress: walletAddress,
         recipientName: recipientName || null,
         recipientAddress: recipientAddress,
@@ -235,11 +324,6 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
         tokenAddress: selectedToken.faucetId,
         tokenSymbol: selectedToken.metadata.symbol,
         onConfirm: async () => {
-          if (onClose && props.onTransactionConfirmed) {
-            await props.onTransactionConfirmed();
-            onClose();
-          }
-
           try {
             setIsSending(true);
             toast.loading("Sending transaction...");
@@ -281,7 +365,6 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
               noteType: CustomNoteType.P2IDR,
               noteId: noteId,
               transactionId: txId,
-              requestPaymentId: props.pendingRequestId,
             });
 
             // refetch assets
@@ -309,27 +392,8 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
               reset();
               setRecipientName("");
 
-              // If this transaction exists in batch, remove it
-              try {
-                if (walletAddress) {
-                  const batchTransactions = getBatchTransactions(walletAddress);
-                  const matchedTransactions = batchTransactions.filter(tx => {
-                    if (props.pendingRequestId != null) return tx.pendingRequestId === props.pendingRequestId;
-                    return (
-                      tx.tokenAddress === selectedToken.faucetId &&
-                      tx.amount === amount.toString() &&
-                      tx.recipient === recipientAddress &&
-                      tx.isPrivate === isPrivateTransaction &&
-                      tx.recallableTime === recallableTime
-                    );
-                  });
-                  matchedTransactions.forEach(tx => removeTransaction(walletAddress, tx.id));
-                }
-              } catch (_) {}
-
-              if (props.pendingRequestId) {
-                await acceptRequest({ id: props.pendingRequestId, txid: txId });
-              }
+              // add member to quick share
+              await addMemberToQuickShare({ code: quickShareCodeParam, userAddress: walletAddress });
             }
           } catch (error) {
             toast.dismiss();
@@ -346,7 +410,7 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
     }
   };
 
-  const handleAddToBatch = async (data: SendTransactionFormValues) => {
+  const handleAddToBatch = async (data: QuickSendFormValues) => {
     const { amount, recipientAddress, recallableTime, isPrivateTransaction } = data;
 
     if (!isConnected || !walletAddress) {
@@ -354,6 +418,19 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
     }
 
     try {
+      // Check if payment is already complete (for quick share payments)
+      if (paymentByLink?.memberStatuses) {
+        const allMembersPaid = paymentByLink.memberStatuses.every(
+          memberStatus => memberStatus.status === "paid" || memberStatus.paidAt !== null,
+        );
+
+        if (allMembersPaid) {
+          toast.dismiss();
+          toast.error("This group payment is already complete. All members have paid.");
+          return;
+        }
+      }
+
       // check if amount > balance
       if (amount > parseFloat(selectedToken.amount)) {
         toast.dismiss();
@@ -392,13 +469,11 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
         recallableHeight: Math.floor(recallableTime / BLOCK_TIME),
         recallableTime: recallableTime,
         noteType: CustomNoteType.P2IDR,
-        pendingRequestId: props.pendingRequestId,
       });
 
       toast.success("Transaction added to batch successfully");
       reset();
       setRecipientName("");
-      onClose();
     } catch (error) {
       toast.dismiss();
       toast.error("Failed to add transaction to batch");
@@ -406,38 +481,12 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
     }
   };
 
-  const handleFormSubmit = async (data: SendTransactionFormValues) => {
+  const handleFormSubmit = async (data: QuickSendFormValues) => {
     if (isSubmittingAsBatch) {
-      await handleAddToBatch(data);
+      handleAddToBatch(data);
     } else {
       await handleSendTransaction(data);
     }
-  };
-
-  // ********************************************
-  // **************** Render *******************
-  // ********************************************
-  const renderRecipientInputButton = () => {
-    if (isGroupPaymentParam || isRequestPaymentParam) {
-      return null;
-    }
-
-    return (
-      <>
-        {watch("recipientAddress") && validateAddress(watch("recipientAddress")) ? (
-          <ActionButton
-            text="Remove"
-            type="deny"
-            onClick={() => {
-              setRecipientName("");
-              setValue("recipientAddress", "");
-            }}
-          />
-        ) : (
-          <ActionButton text="Choose" onClick={handleChooseRecipient} />
-        )}
-      </>
-    );
   };
 
   return (
@@ -455,9 +504,7 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
         <header className="flex flex-wrap gap-5 justify-between self-stretch px-3 py-2 w-full bg-[#2D2D2D] row-span-1">
           {/* Tab Navigation */}
           <nav
-            className={`flex gap-1.5 justify-center items-center self-stretch p-1 rounded-xl bg-neutral-950 h-[34px] row-span-1 ${
-              !isSendModalOpen ? "w-[280px]" : "w-[150px]"
-            }`}
+            className={`flex gap-1.5 justify-center items-center self-stretch p-1 rounded-xl bg-neutral-950 h-[34px] row-span-1 w-[150px]`}
           >
             <button
               type="button"
@@ -476,35 +523,17 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
                 Send
               </span>
             </button>
-            {!isSendModalOpen && (
-              <button
-                type="button"
-                className={`flex gap-0.5 justify-center items-center self-stretch px-4 py-1.5 rounded-lg flex-[1_0_0] ${
-                  activeTab === AmountInputTab.STREAM ? "bg-zinc-800" : ""
-                } cursor-pointer`}
-                onClick={() => {
-                  // TODO: Uncomment this when stream is implemented
-                  // onTabChange?.(AmountInputTab.STREAM);
-                }}
-              >
-                <span
-                  className={`cursor-not-allowed text-base tracking-tight leading-5 text-white ${activeTab === "stream" ? "" : "opacity-50"}`}
-                >
-                  Stream Send
-                </span>
-              </button>
-            )}
           </nav>
           <SelectTokenInput
             selectedToken={selectedToken}
             onTokenSelect={handleTokenSelect}
             tokenAddress={selectedTokenAddress}
-            disabled={isGroupPaymentParam || isRequestPaymentParam}
+            disabled={!!paymentByLink?.tokens?.length} // Disable token selection if payment link specifies token
           />
         </header>
 
         <AmountInput
-          disabled={isGroupPaymentParam || isRequestPaymentParam}
+          disabled={!!paymentByLink?.perMember} // Disable amount input if payment link specifies per member amount
           selectedToken={selectedToken}
           availableBalance={Number(
             formatUnits(BigInt(Math.round(Number(selectedToken.amount))), selectedToken.metadata.decimals),
@@ -515,72 +544,39 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
         />
       </section>
 
-      {/* Recipient Input */}
-      {/* If recipient name is not set, show the input */}
-      {!recipientName ? (
-        <section className="flex flex-col flex-wrap py-2.5 pr-4 pl-3 mt-1 mb-1 w-full rounded-lg bg-zinc-800">
-          <div className="flex flex-wrap gap-2.5 items-center">
-            <img
-              src="/default-avatar-icon.png"
-              alt="Recipient avatar"
-              className="object-contain shrink-0 aspect-square w-[40px]"
-            />
-            <div className="flex flex-col flex-1 ">
-              <div className="flex gap-2 items-center self-start whitespace-nowrap w-full">
-                <label className="text-base leading-none text-center text-white">To</label>
-                <input
-                  {...register("recipientAddress", {
-                    validate: (value: string) => {
-                      if (!value) return true; // Don't show error when empty
-                      if (!value.startsWith("mt")) return "Address must start with 'mt'";
-                      if (value.length < 36) return "Address must be at least 36 characters";
-                      return true;
-                    },
-                  })}
-                  autoComplete="off"
-                  type="text"
-                  placeholder="Enter address or choose from your contacts book"
-                  className=" flex-1 leading-none text-white bg-transparent outline-none placeholder:text-neutral-600 w-full"
-                />
-              </div>
-            </div>
-            {renderRecipientInputButton()}
-          </div>
-
-          {watch("recipientAddress") && !validateAddress(watch("recipientAddress")) && (
-            <span className="text-sm text-red-500">Invalid recipient address</span>
-          )}
-        </section>
-      ) : (
-        <section className="flex flex-col flex-wrap py-2.5 pr-4 pl-3 mt-1 mb-1 w-full rounded-lg bg-zinc-800">
-          <div className="flex flex-wrap gap-2.5 items-center">
-            <img
-              src="/default-avatar-icon.png"
-              alt="Recipient avatar"
-              className="object-contain shrink-0 aspect-square w-[40px]"
-            />
-            <div className="flex flex-col flex-1 shrink justify-center basis-5 min-w-60">
-              <div className="flex gap-2 items-center self-start whitespace-nowrap">
-                <label className="text-base leading-none text-center text-white">To</label>
-                <span className="text-base tracking-tight leading-none text-neutral-600">{recipientName}</span>
-              </div>
-              <span className="mt-2 text-base tracking-tight leading-none text-white bg-transparent outline-none">
-                {getValues("recipientAddress")}
-              </span>
-            </div>
-            {isRequestPaymentParam || isGroupPaymentParam ? null : (
-              <ActionButton
-                text="Remove"
-                type="deny"
-                onClick={() => {
-                  setRecipientName("");
-                  setValue("recipientAddress", "");
-                }}
+      <section className="flex flex-col flex-wrap py-2.5 pr-4 pl-3 mt-1 mb-1 w-full rounded-lg bg-zinc-800">
+        <div className="flex flex-wrap gap-2.5 items-center">
+          <img
+            src="/default-avatar-icon.png"
+            alt="Recipient avatar"
+            className="object-contain shrink-0 aspect-square w-[40px]"
+          />
+          <div className="flex flex-col flex-1 ">
+            <div className="flex gap-2 items-center self-start whitespace-nowrap w-full">
+              <label className="text-base leading-none text-center text-white">To</label>
+              <input
+                {...register("recipientAddress", {
+                  validate: (value: string) => {
+                    if (!value) return true; // Don't show error when empty
+                    if (!value.startsWith("mt")) return "Address must start with 'mt'";
+                    if (value.length < 36) return "Address must be at least 36 characters";
+                    return true;
+                  },
+                })}
+                autoComplete="off"
+                type="text"
+                placeholder="Enter address or choose from your contacts book"
+                className=" flex-1 leading-none text-white bg-transparent outline-none placeholder:text-neutral-600 w-full"
+                disabled={!!paymentByLink?.group?.ownerAddress} // Disable if payment link specifies recipient
               />
-            )}
+            </div>
           </div>
-        </section>
-      )}
+        </div>
+
+        {watch("recipientAddress") && !validateAddress(watch("recipientAddress")) && (
+          <span className="text-sm text-red-500">Invalid recipient address</span>
+        )}
+      </section>
 
       <TransactionOptions register={register} watch={watch} setValue={setValue} />
 
@@ -604,17 +600,6 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
         </div>
       ) : (
         <div className="relative">
-          {/* <WalletMultiButton
-            className="wallet-button-custom cursor-pointer w-full h-10 mt-2"
-            style={{
-              color: "transparent",
-              fontSize: "0",
-              backgroundColor: "transparent",
-              border: "none",
-              outline: "none",
-            }}
-          /> */}
-
           <ActionButton
             text="Connect Wallet"
             buttonType="submit"
@@ -625,10 +610,8 @@ export const SendTransactionForm: React.FC<SendTransactionFormProps & SendModalP
           />
         </div>
       )}
-
-      {/* Send button */}
     </form>
   );
 };
 
-export default SendTransactionForm;
+export default QuickSendForm;
